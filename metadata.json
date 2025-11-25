@@ -1,0 +1,5 @@
+{
+  "name": "IronHour",
+  "description": "A high-performance productivity application based on the 60-minute ritual philosophy. It enforces a strict 'Guard, Direct, Reflect' workflow to build habits one brick at a time.",
+  "requestFramePermissions": []
+}
