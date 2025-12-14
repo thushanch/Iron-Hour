@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { PlanType, SessionPhase, SessionRecord, PLAN_DETAILS, SessionMeta } from '../types';
-import { Compass, Shield, History, ArrowRight, CheckCircle, AlertTriangle, Lock, Heart, Users, Activity, Link as LinkIcon } from 'lucide-react';
+import { Compass, Shield, History, ArrowRight, CheckCircle, AlertTriangle, Link as LinkIcon, Play, Pause } from 'lucide-react';
 
 interface SessionRunnerProps {
   plan: PlanType;
@@ -48,7 +48,8 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
     if (phase === 'REVIEW') setTimeLeft(DURATION_REVIEW);
 
     const interval = window.setInterval(() => {
-      if (!isPaused && phase !== 'COMPLETED' && !showEmergencyModal) {
+      // Timer runs if NOT paused AND NOT showing modal AND phase is not completed
+      if (!isPaused && !showEmergencyModal && phase !== 'COMPLETED') {
         setTimeLeft((prev) => {
           if (prev <= 1) {
             handlePhaseComplete(phase);
@@ -61,12 +62,13 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
     timerRef.current = interval;
 
     return () => clearInterval(interval);
-  }, [phase, isPaused, showEmergencyModal]);
+  }, [phase]); // Dependency simplified as internal checks handle pause logic, but re-running effect on phase change is key
 
   const handlePhaseComplete = (currentPhase: SessionPhase) => {
     if (currentPhase === 'FOCUS') {
        // Play sound logic here
        setPhase('REVIEW');
+       setIsPaused(false);
     }
   };
 
@@ -75,6 +77,7 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
         if (!goal || !why) return alert("Direction before action. Fill out the compass.");
         if (plan === PlanType.FOUNDATION && gratitudes.some(g => !g.trim())) return alert("Gratitude is the foundation. Please list 3.");
         setPhase('FOCUS');
+        setIsPaused(true); // Start FOCUS phase in paused state to allow "Start" action
     } else if (phase === 'FOCUS') {
         if (confirm("End the Iron Fence early? This is not recommended.")) {
             setPhase('REVIEW');
@@ -87,7 +90,8 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
 
   const handleEmergencyToggle = () => {
       if (!showEmergencyModal) {
-          setShowEmergencyModal(true); // Pause effectively via the useEffect condition
+          setShowEmergencyModal(true); 
+          // Note: showing modal effectively pauses the timer in the interval check
       } else {
           setShowEmergencyModal(false);
       }
@@ -96,7 +100,7 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
   const confirmEmergencyBreak = () => {
       setInterruptions(prev => prev + 1);
       setShowEmergencyModal(false);
-      setIsPaused(true); // Manually pause
+      setIsPaused(true); // Manually pause after confirming break
   };
 
   const finishSession = () => {
@@ -268,15 +272,27 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
       )}
 
       <div className="mb-8">
-        <div className={`inline-flex items-center gap-2 ${PLAN_DETAILS[plan].color} mb-4`}>
-           <Shield className="animate-pulse" />
-           <span className="font-bold tracking-widest text-sm uppercase">Iron Fence Active</span>
+        <div className={`inline-flex items-center gap-2 ${PLAN_DETAILS[plan].color} mb-4 transition-all duration-300 ${isPaused ? 'opacity-50' : 'opacity-100'}`}>
+           <Shield className={!isPaused ? "animate-pulse" : ""} />
+           <span className="font-bold tracking-widest text-sm uppercase">
+               {isPaused ? "Iron Fence Paused" : "Iron Fence Active"}
+           </span>
         </div>
         
-        <h1 className="text-[6rem] md:text-[9rem] font-bold tabular-nums leading-none tracking-tighter select-none font-mono">
+        <h1 className={`text-[6rem] md:text-[9rem] font-bold tabular-nums leading-none tracking-tighter select-none font-mono transition-opacity duration-300 ${isPaused ? 'opacity-50' : 'opacity-100'}`}>
           {formatTime(timeLeft)}
         </h1>
         
+        {isPaused && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+             <div className="bg-black/40 px-6 py-2 rounded-xl backdrop-blur-sm border border-gold-500/30">
+               <span className="text-gold-500 font-bold tracking-[0.2em] text-xl uppercase animate-pulse">
+                 Paused
+               </span>
+             </div>
+          </div>
+        )}
+
         <div className="mt-8 space-y-2">
             <p className="text-2xl text-white font-medium max-w-2xl mx-auto leading-relaxed">
                 "{goal}"
@@ -292,17 +308,39 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
                 </a>
             )}
             <p className="text-sm text-gray-500 max-w-md mx-auto italic mt-4">
-               {isPaused ? "SESSION PAUSED" : "Notifications Blocked. Single Tasking Only."}
+               {isPaused ? "Session paused. Resume to build." : "Notifications Blocked. Single Tasking Only."}
             </p>
         </div>
       </div>
 
-      <div className="flex gap-4 mt-8">
+      <div className="flex gap-4 mt-8 items-center justify-center">
+        {/* Play/Pause/Resume Controls */}
+        {isPaused ? (
+          <button 
+            onClick={() => setIsPaused(false)}
+            className="px-8 py-3 rounded-full bg-white text-black hover:bg-gray-200 transition-all font-bold flex items-center gap-2 shadow-[0_0_20px_rgba(255,255,255,0.2)] hover:scale-105"
+          >
+            <Play size={20} fill="currentColor" />
+            {timeLeft === DURATION_FOCUS ? 'Start' : 'Resume'}
+          </button>
+        ) : (
+          <button 
+            onClick={() => setIsPaused(true)}
+            className="px-8 py-3 rounded-full bg-gray-800 text-white border border-gray-700 hover:bg-gray-700 transition-all font-bold flex items-center gap-2"
+          >
+            <Pause size={20} fill="currentColor" />
+            Pause
+          </button>
+        )}
+
+        <div className="w-px h-8 bg-gray-800 mx-2"></div>
+
         <button 
           onClick={handleEmergencyToggle}
-          className={`px-8 py-3 rounded-full border transition-colors font-medium flex items-center gap-2 ${isPaused ? 'bg-yellow-500/20 border-yellow-500 text-yellow-500' : 'border-gray-700 text-gray-400 hover:text-white hover:border-white'}`}
+          className="px-6 py-3 rounded-full border border-gray-800 text-gray-500 hover:text-red-400 hover:border-red-900/50 transition-colors font-medium flex items-center gap-2 text-sm"
         >
-          {isPaused ? "Resume Session" : "Emergency Override"}
+          <AlertTriangle size={16} />
+          Emergency Override
         </button>
       </div>
 
