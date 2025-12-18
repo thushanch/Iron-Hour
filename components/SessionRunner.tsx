@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { PlanType, SessionPhase, SessionRecord, PLAN_DETAILS, SessionMeta } from '../types';
-import { Compass, Shield, History, ArrowRight, CheckCircle, AlertTriangle, Link as LinkIcon, Play, Pause } from 'lucide-react';
+import { Compass, Shield, History, ArrowRight, CheckCircle, AlertTriangle, Link as LinkIcon, Play, Pause, RotateCcw } from 'lucide-react';
 
 interface SessionRunnerProps {
   plan: PlanType;
@@ -9,7 +9,7 @@ interface SessionRunnerProps {
   onExit: () => void;
 }
 
-// Production Times
+// Production Times (Seconds)
 const DURATION_CALIBRATION = 180; // 3 mins
 const DURATION_FOCUS = 52 * 60;   // 52 mins
 const DURATION_REVIEW = 300;      // 5 mins
@@ -19,6 +19,72 @@ const formatTime = (seconds: number) => {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+};
+
+/**
+ * Reusable Countdown Timer Component
+ */
+const CountdownTimer = ({ 
+  timeLeft, 
+  isPaused, 
+  onTogglePause, 
+  onReset,
+  phase 
+}: { 
+  timeLeft: number, 
+  isPaused: boolean, 
+  onTogglePause: () => void,
+  onReset?: () => void,
+  phase: SessionPhase
+}) => {
+  const isFocus = phase === 'FOCUS';
+  
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <div className="relative">
+        <h1 className={`
+          ${isFocus ? 'text-[7rem] md:text-[9rem]' : 'text-5xl md:text-7xl'} 
+          font-bold tabular-nums leading-none tracking-tighter select-none font-mono transition-all duration-500
+          ${isPaused ? 'opacity-30 blur-[2px]' : 'opacity-100 text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]'}
+        `}>
+          {formatTime(timeLeft)}
+        </h1>
+        
+        {isPaused && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <span className="text-gold-500 font-bold tracking-[0.3em] text-sm md:text-xl uppercase animate-pulse bg-black/60 px-4 py-1 rounded backdrop-blur-sm border border-gold-500/20">
+              PAUSED
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button 
+          onClick={onTogglePause}
+          className={`
+            p-3 rounded-full transition-all duration-300 flex items-center justify-center
+            ${isPaused 
+              ? 'bg-white text-black hover:scale-110 shadow-lg shadow-white/10' 
+              : 'bg-gray-800 text-gray-400 hover:text-white border border-gray-700'}
+          `}
+          title={isPaused ? 'Resume' : 'Pause'}
+        >
+          {isPaused ? <Play size={24} fill="currentColor" /> : <Pause size={24} fill="currentColor" />}
+        </button>
+        
+        {onReset && isPaused && (
+          <button 
+            onClick={onReset}
+            className="p-3 rounded-full bg-gray-900 border border-gray-800 text-gray-500 hover:text-red-400 transition-colors"
+            title="Reset Phase Timer"
+          >
+            <RotateCcw size={20} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
 };
 
 export default function SessionRunner({ plan, onComplete, onExit }: SessionRunnerProps) {
@@ -39,16 +105,9 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
   const [activityType, setActivityType] = useState<'MOVEMENT' | 'CONNECTION' | 'MEDITATION'>('MOVEMENT');
   const [interruptions, setInterruptions] = useState(0);
 
-  const timerRef = useRef<number | null>(null);
-
   useEffect(() => {
-    // Reset timer on phase change
-    if (phase === 'CALIBRATION') setTimeLeft(DURATION_CALIBRATION);
-    if (phase === 'FOCUS') setTimeLeft(DURATION_FOCUS);
-    if (phase === 'REVIEW') setTimeLeft(DURATION_REVIEW);
-
+    // Timer Interval
     const interval = window.setInterval(() => {
-      // Timer runs if NOT paused AND NOT showing modal AND phase is not completed
       if (!isPaused && !showEmergencyModal && phase !== 'COMPLETED') {
         setTimeLeft((prev) => {
           if (prev <= 1) {
@@ -59,16 +118,19 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
         });
       }
     }, 1000);
-    timerRef.current = interval;
 
     return () => clearInterval(interval);
-  }, [phase]); // Dependency simplified as internal checks handle pause logic, but re-running effect on phase change is key
+  }, [phase, isPaused, showEmergencyModal]);
 
   const handlePhaseComplete = (currentPhase: SessionPhase) => {
-    if (currentPhase === 'FOCUS') {
-       // Play sound logic here
+    if (currentPhase === 'CALIBRATION') {
+      // Auto-advance if forms are filled? Usually better to wait for button
+    } else if (currentPhase === 'FOCUS') {
        setPhase('REVIEW');
+       setTimeLeft(DURATION_REVIEW);
        setIsPaused(false);
+    } else if (currentPhase === 'REVIEW') {
+       // Just stop
     }
   };
 
@@ -77,10 +139,13 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
         if (!goal || !why) return alert("Direction before action. Fill out the compass.");
         if (plan === PlanType.FOUNDATION && gratitudes.some(g => !g.trim())) return alert("Gratitude is the foundation. Please list 3.");
         setPhase('FOCUS');
-        setIsPaused(true); // Start FOCUS phase in paused state to allow "Start" action
+        setTimeLeft(DURATION_FOCUS);
+        setIsPaused(false); 
     } else if (phase === 'FOCUS') {
         if (confirm("End the Iron Fence early? This is not recommended.")) {
             setPhase('REVIEW');
+            setTimeLeft(DURATION_REVIEW);
+            setIsPaused(false);
         }
     } else if (phase === 'REVIEW') {
         if (!reflection) return alert("Reflect to refine. Don't skip the mirror.");
@@ -88,19 +153,21 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
     }
   };
 
+  const resetPhaseTimer = () => {
+    if (!confirm("Reset the timer for this phase?")) return;
+    if (phase === 'CALIBRATION') setTimeLeft(DURATION_CALIBRATION);
+    if (phase === 'FOCUS') setTimeLeft(DURATION_FOCUS);
+    if (phase === 'REVIEW') setTimeLeft(DURATION_REVIEW);
+  };
+
   const handleEmergencyToggle = () => {
-      if (!showEmergencyModal) {
-          setShowEmergencyModal(true); 
-          // Note: showing modal effectively pauses the timer in the interval check
-      } else {
-          setShowEmergencyModal(false);
-      }
+      setShowEmergencyModal(true);
   };
 
   const confirmEmergencyBreak = () => {
       setInterruptions(prev => prev + 1);
       setShowEmergencyModal(false);
-      setIsPaused(true); // Manually pause after confirming break
+      setIsPaused(true); 
   };
 
   const finishSession = () => {
@@ -194,13 +261,23 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
   }
 
   const renderCalibration = () => (
-    <div className="max-w-xl mx-auto space-y-6 animate-fade-in pb-10">
+    <div className="max-w-xl mx-auto space-y-8 animate-fade-in pb-10">
       <div className="text-center">
         <div className="inline-flex items-center justify-center p-3 bg-gray-800 rounded-full mb-4">
           <Compass className={`w-8 h-8 ${PLAN_DETAILS[plan].color}`} />
         </div>
         <h2 className="text-3xl font-bold">Phase 1: Calibration</h2>
         <p className="text-gray-400 mt-2">"Where am I going? Why does this matter?"</p>
+      </div>
+
+      <div className="flex justify-center py-4">
+        <CountdownTimer 
+          timeLeft={timeLeft} 
+          isPaused={isPaused} 
+          onTogglePause={() => setIsPaused(!isPaused)}
+          onReset={resetPhaseTimer}
+          phase={phase}
+        />
       </div>
 
       <div className="space-y-4">
@@ -227,22 +304,19 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
         {renderCalibrationInputs()}
       </div>
       
-      <div className="flex justify-between items-center pt-4">
-         <div className="text-sm font-mono text-gray-500">
-           Time remaining: {formatTime(timeLeft)}
-         </div>
+      <div className="flex justify-end pt-4">
          <button 
            onClick={advancePhase}
-           className="bg-white text-black px-6 py-3 rounded-full font-bold hover:bg-gray-200 transition-colors flex items-center gap-2"
+           className="bg-white text-black px-8 py-4 rounded-full font-bold hover:bg-gray-200 transition-colors flex items-center gap-2 group shadow-xl"
          >
-           Enter Iron Fence <ArrowRight size={18} />
+           Enter Iron Fence <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
          </button>
       </div>
     </div>
   );
 
   const renderFocus = () => (
-    <div className="flex flex-col items-center justify-center h-full animate-fade-in text-center relative">
+    <div className="flex flex-col items-center justify-center h-full animate-fade-in text-center relative py-12">
       
       {/* Emergency Modal Overlay */}
       {showEmergencyModal && (
@@ -271,30 +345,24 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
           </div>
       )}
 
-      <div className="mb-8">
-        <div className={`inline-flex items-center gap-2 ${PLAN_DETAILS[plan].color} mb-4 transition-all duration-300 ${isPaused ? 'opacity-50' : 'opacity-100'}`}>
+      <div className="mb-12 space-y-8">
+        <div className={`inline-flex items-center gap-2 ${PLAN_DETAILS[plan].color} transition-all duration-300 ${isPaused ? 'opacity-50' : 'opacity-100'}`}>
            <Shield className={!isPaused ? "animate-pulse" : ""} />
            <span className="font-bold tracking-widest text-sm uppercase">
                {isPaused ? "Iron Fence Paused" : "Iron Fence Active"}
            </span>
         </div>
         
-        <h1 className={`text-[6rem] md:text-[9rem] font-bold tabular-nums leading-none tracking-tighter select-none font-mono transition-opacity duration-300 ${isPaused ? 'opacity-50' : 'opacity-100'}`}>
-          {formatTime(timeLeft)}
-        </h1>
-        
-        {isPaused && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-             <div className="bg-black/40 px-6 py-2 rounded-xl backdrop-blur-sm border border-gold-500/30">
-               <span className="text-gold-500 font-bold tracking-[0.2em] text-xl uppercase animate-pulse">
-                 Paused
-               </span>
-             </div>
-          </div>
-        )}
+        <CountdownTimer 
+          timeLeft={timeLeft} 
+          isPaused={isPaused} 
+          onTogglePause={() => setIsPaused(!isPaused)}
+          onReset={resetPhaseTimer}
+          phase={phase}
+        />
 
-        <div className="mt-8 space-y-2">
-            <p className="text-2xl text-white font-medium max-w-2xl mx-auto leading-relaxed">
+        <div className="space-y-4">
+            <p className="text-3xl text-white font-medium max-w-2xl mx-auto leading-tight">
                 "{goal}"
             </p>
             {externalLink && (
@@ -302,56 +370,35 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
                     href={externalLink} 
                     target="_blank" 
                     rel="noreferrer"
-                    className="inline-flex items-center gap-2 text-emerald-400 hover:text-emerald-300 underline underline-offset-4 mt-2"
+                    className="inline-flex items-center gap-2 text-emerald-400 hover:text-emerald-300 underline underline-offset-4"
                 >
                     <LinkIcon size={14} /> Open Work Environment
                 </a>
             )}
-            <p className="text-sm text-gray-500 max-w-md mx-auto italic mt-4">
-               {isPaused ? "Session paused. Resume to build." : "Notifications Blocked. Single Tasking Only."}
+            <p className="text-sm text-gray-500 max-w-md mx-auto italic">
+               {isPaused ? "Session suspended. Stay in the zone." : "Deep concentration in progress. The world waits."}
             </p>
         </div>
       </div>
 
-      <div className="flex gap-4 mt-8 items-center justify-center">
-        {/* Play/Pause/Resume Controls */}
-        {isPaused ? (
-          <button 
-            onClick={() => setIsPaused(false)}
-            className="px-8 py-3 rounded-full bg-white text-black hover:bg-gray-200 transition-all font-bold flex items-center gap-2 shadow-[0_0_20px_rgba(255,255,255,0.2)] hover:scale-105"
-          >
-            <Play size={20} fill="currentColor" />
-            {timeLeft === DURATION_FOCUS ? 'Start' : 'Resume'}
-          </button>
-        ) : (
-          <button 
-            onClick={() => setIsPaused(true)}
-            className="px-8 py-3 rounded-full bg-gray-800 text-white border border-gray-700 hover:bg-gray-700 transition-all font-bold flex items-center gap-2"
-          >
-            <Pause size={20} fill="currentColor" />
-            Pause
-          </button>
-        )}
-
-        <div className="w-px h-8 bg-gray-800 mx-2"></div>
-
+      <div className="mt-8">
         <button 
           onClick={handleEmergencyToggle}
-          className="px-6 py-3 rounded-full border border-gray-800 text-gray-500 hover:text-red-400 hover:border-red-900/50 transition-colors font-medium flex items-center gap-2 text-sm"
+          className="px-6 py-2 rounded-full border border-gray-800 text-gray-600 hover:text-red-400 hover:border-red-900/50 transition-colors font-medium flex items-center gap-2 text-xs"
         >
-          <AlertTriangle size={16} />
+          <AlertTriangle size={14} />
           Emergency Override
         </button>
       </div>
 
       <div className="absolute bottom-4 left-0 right-0 text-center">
-          <p className="text-xs text-gray-600">Interruptions: {interruptions}</p>
+          <p className="text-xs text-gray-700 font-mono tracking-widest uppercase">Interruptions logged: {interruptions}</p>
       </div>
     </div>
   );
 
   const renderReview = () => (
-    <div className="max-w-xl mx-auto space-y-6 animate-fade-in pb-10">
+    <div className="max-w-xl mx-auto space-y-8 animate-fade-in pb-10">
       <div className="text-center">
         <div className="inline-flex items-center justify-center p-3 bg-gray-800 rounded-full mb-4">
           <History className={`w-8 h-8 ${PLAN_DETAILS[plan].color}`} />
@@ -360,9 +407,19 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
         <p className="text-gray-400 mt-2">"Reflect, Refine, Repeat."</p>
       </div>
 
-      <div className="space-y-4">
+      <div className="flex justify-center py-4">
+        <CountdownTimer 
+          timeLeft={timeLeft} 
+          isPaused={isPaused} 
+          onTogglePause={() => setIsPaused(!isPaused)}
+          onReset={resetPhaseTimer}
+          phase={phase}
+        />
+      </div>
+
+      <div className="space-y-6">
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-1">
+          <label className="block text-sm font-medium text-gray-300 mb-2">
               {plan === PlanType.BUILDER ? "What tangible progress did you make?" : 
                plan === PlanType.VITALITY ? "How does your body/mind feel?" :
                "What did you learn or visualize?"}
@@ -370,64 +427,62 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
           <textarea 
             value={reflection}
             onChange={(e) => setReflection(e.target.value)}
-            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-4 focus:border-purple-500 focus:outline-none transition-colors"
-            rows={3}
+            className="w-full bg-gray-900 border border-gray-700 rounded-xl p-4 focus:border-purple-500 focus:outline-none transition-colors"
+            rows={4}
+            placeholder="Insight before outcome..."
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-1">Refine: What will you do differently tomorrow?</label>
+          <label className="block text-sm font-medium text-gray-300 mb-2">Refine: What will you do differently tomorrow?</label>
           <textarea 
             value={refinement}
             onChange={(e) => setRefinement(e.target.value)}
             placeholder="Small tweak, big result..."
-            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-4 focus:border-purple-500 focus:outline-none transition-colors"
+            className="w-full bg-gray-900 border border-gray-700 rounded-xl p-4 focus:border-purple-500 focus:outline-none transition-colors"
             rows={2}
           />
         </div>
 
         {interruptions > 0 && (
-            <div className="p-4 bg-red-900/20 border border-red-900/50 rounded-lg">
-                <p className="text-red-400 text-sm">
-                    <AlertTriangle className="inline w-4 h-4 mr-2" />
-                    You had {interruptions} interruption(s). Tomorrow, aim for zero. Guard the hour.
+            <div className="p-4 bg-red-900/20 border border-red-900/50 rounded-xl flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
+                <p className="text-red-400 text-sm leading-relaxed">
+                    You had {interruptions} interruption(s). Tomorrow, double down on the Social Contract. Guard the hour at all costs.
                 </p>
             </div>
         )}
       </div>
       
-      <div className="flex justify-between items-center pt-4">
-        <div className="text-sm font-mono text-gray-500">
-           Closing in: {formatTime(timeLeft)}
-        </div>
+      <div className="flex justify-end pt-6">
         <button 
            onClick={advancePhase}
-           className="bg-gold-500 text-black px-8 py-3 rounded-full font-bold hover:bg-gold-400 transition-colors flex items-center gap-2 shadow-lg shadow-gold-500/20"
+           className="bg-gold-500 text-black px-10 py-4 rounded-full font-bold hover:bg-gold-400 hover:scale-105 transition-all flex items-center gap-2 shadow-lg shadow-gold-500/20"
          >
-           Stack This Hour <CheckCircle size={18} />
+           Stack This Hour <CheckCircle size={22} />
          </button>
       </div>
     </div>
   );
 
   return (
-    <div className="min-h-[85vh] flex flex-col">
-       <div className="mb-6 flex justify-between items-center border-b border-gray-800 pb-4">
-          <button onClick={onExit} className="text-sm text-gray-500 hover:text-white transition-colors">Quit Session</button>
+    <div className="min-h-[85vh] flex flex-col px-4">
+       <div className="mb-8 flex justify-between items-center border-b border-gray-800 pb-4 mt-4">
+          <button onClick={onExit} className="text-sm text-gray-500 hover:text-white transition-colors font-medium">Quit Session</button>
           
           <div className="flex gap-4">
-             <StepIndicator active={phase === 'CALIBRATION'} done={phase !== 'CALIBRATION'} label="1. Aim" color={PLAN_DETAILS[plan].bg.replace('bg-', '')} />
-             <div className="w-8 h-px bg-gray-800 self-center"></div>
-             <StepIndicator active={phase === 'FOCUS'} done={phase === 'REVIEW'} label="2. Act" color={PLAN_DETAILS[plan].bg.replace('bg-', '')} />
-             <div className="w-8 h-px bg-gray-800 self-center"></div>
-             <StepIndicator active={phase === 'REVIEW'} done={false} label="3. Reflect" color={PLAN_DETAILS[plan].bg.replace('bg-', '')} />
+             <StepIndicator active={phase === 'CALIBRATION'} done={phase !== 'CALIBRATION'} label="Aim" color={PLAN_DETAILS[plan].bg.replace('bg-', '')} />
+             <div className="w-6 md:w-10 h-px bg-gray-800 self-center"></div>
+             <StepIndicator active={phase === 'FOCUS'} done={phase === 'REVIEW'} label="Act" color={PLAN_DETAILS[plan].bg.replace('bg-', '')} />
+             <div className="w-6 md:w-10 h-px bg-gray-800 self-center"></div>
+             <StepIndicator active={phase === 'REVIEW'} done={false} label="Reflect" color={PLAN_DETAILS[plan].bg.replace('bg-', '')} />
           </div>
 
-          <div className={`text-sm font-bold ${PLAN_DETAILS[plan].color} uppercase tracking-widest hidden md:block`}>
+          <div className={`text-xs font-bold ${PLAN_DETAILS[plan].color} uppercase tracking-widest hidden lg:block`}>
               {PLAN_DETAILS[plan].title}
           </div>
        </div>
 
-       <div className="flex-1 flex flex-col justify-center relative">
+       <div className="flex-1 flex flex-col justify-center relative max-w-4xl mx-auto w-full">
          {phase === 'CALIBRATION' && renderCalibration()}
          {phase === 'FOCUS' && renderFocus()}
          {phase === 'REVIEW' && renderReview()}
@@ -437,15 +492,13 @@ export default function SessionRunner({ plan, onComplete, onExit }: SessionRunne
 }
 
 const StepIndicator = ({ active, done, label, color }: { active: boolean, done: boolean, label: string, color: string }) => {
-    // We map the tailwind color string to a hex for shadow if needed, but here simple bg classes work better
-    // color comes in as 'blue-500' etc.
-    const activeClass = active ? `bg-${color} scale-110 shadow-[0_0_10px_rgba(255,255,255,0.3)]` : '';
+    const activeClass = active ? `bg-${color} scale-125 shadow-[0_0_15px_rgba(255,255,255,0.4)]` : '';
     const doneClass = done ? 'bg-gray-400' : 'bg-gray-800';
     
     return (
-        <div className={`flex flex-col items-center gap-2 ${active ? 'opacity-100' : 'opacity-50'}`}>
-            <div className={`w-3 h-3 rounded-full transition-all duration-300 ${active ? activeClass : doneClass}`}></div>
-            <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
+        <div className={`flex flex-col items-center gap-2 transition-opacity duration-300 ${active ? 'opacity-100' : 'opacity-40'}`}>
+            <div className={`w-3 h-3 rounded-full transition-all duration-500 ${active ? activeClass : doneClass}`}></div>
+            <span className="text-[10px] font-bold uppercase tracking-[0.15em]">{label}</span>
         </div>
     );
 };
